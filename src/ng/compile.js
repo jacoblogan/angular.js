@@ -641,6 +641,38 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
     }
   };
 
+/**
+ * @ngdoc method
+ * @name  $compileProvider#debugInfoEnabled
+ *
+ * @param {boolean=} enabled update the debugInfoEnabled state if provided, otherwise just return the
+ * current debugInfoEnabled state
+ * @returns {*} current value if used as getter or itself (chaining) if used as setter
+ *
+ * @kind function
+ *
+ * @description
+ * Call this method to enable/disable various debug runtime information in the compiler such as adding
+ * binding information and a reference to the current scope on to DOM elements.
+ * If enabled, the compiler will add the following to DOM elements that have been bound to the scope
+ * * `ng-binding` CSS class
+ * * `$binding` data property containing an array of the binding expressions
+ *
+ * You may want to disable this in production for a significant performance boost. See
+ * {@link guide/production#disabling-debug-data Disabling Debug Data} for more.
+ *
+ * The default value is true.
+ */
+var debugInfoEnabled = true;
+this.debugInfoEnabled = function(enabled) {
+    if (isDefined(enabled)) {
+        debugInfoEnabled = enabled;
+        return this;
+    }
+    return debugInfoEnabled;
+};
+
+
   this.$get = [
             '$injector', '$interpolate', '$exceptionHandler', '$http', '$templateCache', '$parse',
             '$controller', '$rootScope', '$document', '$sce', '$animate', '$$sanitizeUri',
@@ -836,6 +868,32 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
         },
         NG_ATTR_BINDING = /^ngAttr[A-Z]/;
 
+    compile.$$addBindingInfo = debugInfoEnabled ? function $$addBindingInfo($element, binding) {
+        var bindings = $element.data('$binding') || [];
+
+        if (isArray(binding)) {
+            bindings = ($element.data('$binding') ? (isArray($element.data('$binding')) ? $element.data('$binding') : [$element.data('$binding')]) : []).concat(binding);
+        } else {
+            bindings = $element.data('$binding') ? [$element.data('$binding')].push(binding) : binding;
+        }
+
+        $element.data('$binding', bindings);
+    } : noop;
+
+    compile.$$addBindingClass = debugInfoEnabled ? function $$addBindingClass($element) {
+        safeAddClass($element, 'ng-binding');
+    } : noop;
+
+    compile.$$addScopeInfo = debugInfoEnabled ? function $$addScopeInfo($element, scope, isolated, noTemplate) {
+        var dataName = isolated ? (noTemplate ? '$isolateScopeNoTemplate' : '$isolateScope') : '$scope';
+        $element.data(dataName, scope);
+    } : noop;
+
+
+    compile.$$addScopeClass = debugInfoEnabled ? function $$addScopeClass($element, isolated) {
+        safeAddClass($element, isolated ? 'ng-isolate-scope' : 'ng-scope');
+    } : noop;
+
 
     return compile;
 
@@ -852,13 +910,13 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
       // not be able to attach scope data to them, so we will wrap them in <span>
       forEach($compileNodes, function(node, index){
         if (node.nodeType == 3 /* text node */ && node.nodeValue.match(/\S+/) /* non-empty */ ) {
-          $compileNodes[index] = node = jqLite(node).wrap('<span></span>').parent()[0];
+          $compileNodes[index] = jqLite(node).wrap('<span></span>').parent()[0];
         }
       });
       var compositeLinkFn =
               compileNodes($compileNodes, transcludeFn, $compileNodes,
                            maxPriority, ignoreDirective, previousCompileContext);
-      safeAddClass($compileNodes, 'ng-scope');
+      compile.$$addScopeClass($compileNodes);
       return function publicLinkFn(scope, cloneConnectFn, transcludeControllers, parentBoundTranscludeFn){
         assertArg(scope, 'scope');
         // important!!: we must call our jqLite.clone() since the jQuery one is trying to be smart
@@ -875,8 +933,8 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
         for(var i = 0, ii = $linkNode.length; i<ii; i++) {
           var node = $linkNode[i],
               nodeType = node.nodeType;
-          if (nodeType === 1 /* element */ || nodeType === 9 /* document */) {
-            $linkNode.eq(i).data('$scope', scope);
+          if ((nodeType === 1 /* element */ || nodeType === 9 /* document */) ) {
+            compile.$$addScopeInfo($linkNode.eq(i), scope);
           }
         }
 
@@ -887,12 +945,12 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
     }
 
     function safeAddClass($element, className) {
-      try {
-        $element.addClass(className);
-      } catch(e) {
+        try {
+            $element.addClass(className);
+        } catch(e) {
         // ignore, since it means that we are trying to set class on
         // SVG element, where class name is read-only.
-      }
+        }
     }
 
     /**
@@ -928,7 +986,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             : null;
 
         if (nodeLinkFn && nodeLinkFn.scope) {
-          safeAddClass(attrs.$$element, 'ng-scope');
+          compile.$$addScopeClass(attrs.$$element);
         }
 
         childLinkFn = (nodeLinkFn && nodeLinkFn.terminal ||
@@ -967,7 +1025,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
           if (nodeLinkFn) {
             if (nodeLinkFn.scope) {
               childScope = scope.$new();
-              jqLite.data(node, '$scope', childScope);
+                compile.$$addScopeInfo(jqLite(node), childScope);
             } else {
               childScope = scope;
             }
@@ -1451,16 +1509,10 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
 
           isolateScope = scope.$new(true);
 
-          if (templateDirective && (templateDirective === newIsolateScopeDirective ||
-              templateDirective === newIsolateScopeDirective.$$originalDirective)) {
-            $element.data('$isolateScope', isolateScope);
-          } else {
-            $element.data('$isolateScopeNoTemplate', isolateScope);
-          }
+          compile.$$addScopeInfo($element, isolateScope, true, !(templateDirective && (templateDirective === newIsolateScopeDirective ||
+              templateDirective === newIsolateScopeDirective.$$originalDirective)));
 
-
-
-          safeAddClass($element, 'ng-isolate-scope');
+          compile.$$addScopeClass($element, true);
 
           forEach(newIsolateScopeDirective.scope, function(definition, scopeName) {
             var match = definition.match(LOCAL_REGEXP) || [],
@@ -1847,14 +1899,14 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
               // when transcluding a template that has bindings in the root
               // then we don't have a parent and should do this in the linkFn
               var parent = templateNode.parent(), hasCompileParent = parent.length;
-              if (hasCompileParent) safeAddClass(templateNode.parent(), 'ng-binding');
+              if (hasCompileParent) compile.$$addBindingClass(parent);
 
               return function textInterpolateLinkFn(scope, node) {
                 var parent = node.parent(),
                   bindings = parent.data('$binding') || [];
                 bindings.push(interpolateFn);
-                parent.data('$binding', bindings);
-                if (!hasCompileParent) safeAddClass(parent, 'ng-binding');
+                compile.$$addBindingInfo(parent, bindings);
+                if (!hasCompileParent) compile.$$addBindingClass(parent);
                 scope.$watch(interpolateFn, function interpolateFnWatchAction(value) {
                   node[0].nodeValue = value;
                 });

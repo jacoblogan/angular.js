@@ -51,20 +51,23 @@
      </file>
    </example>
  */
-var ngBindDirective = ngDirective({
-  compile: function(templateElement) {
-    templateElement.addClass('ng-binding');
-    return function (scope, element, attr) {
-      element.data('$binding', attr.ngBind);
-      scope.$watch(attr.ngBind, function ngBindWatchAction(value) {
-        // We are purposefully using == here rather than === because we want to
-        // catch when value is "null or undefined"
-        // jshint -W041
-        element.text(value == undefined ? '' : value);
-      });
-    };
-  }
-});
+var ngBindDirective = ['$compile', function($compile) {
+    return {
+        restrict: 'AC',
+        compile: function(templateElement) {
+            $compile.$$addBindingClass(templateElement);
+            return function (scope, element, attr) {
+                $compile.$$addBindingInfo(element, attr.ngBind);
+                scope.$watch(attr.ngBind, function ngBindWatchAction(value) {
+                    // We are purposefully using == here rather than === because we want to
+                    // catch when value is "null or undefined"
+                    // jshint -W041
+                    element.text(value == undefined ? '' : value);
+                });
+            };
+        }
+    }
+}];
 
 
 /**
@@ -118,11 +121,12 @@ var ngBindDirective = ngDirective({
      </file>
    </example>
  */
-var ngBindTemplateDirective = ['$interpolate', function($interpolate) {
+var ngBindTemplateDirective = ['$interpolate', '$compile', function($interpolate, $compile) {
   return function(scope, element, attr) {
     // TODO: move this to scenario runner
     var interpolateFn = $interpolate(element.attr(attr.$attr.ngBindTemplate));
-    element.addClass('ng-binding').data('$binding', interpolateFn);
+    $compile.$$addBindingClass(element);
+    $compile.$$addBindingInfo(element, interpolateFn);
     attr.$observe('ngBindTemplate', function(value) {
       element.text(value);
     });
@@ -178,13 +182,13 @@ var ngBindTemplateDirective = ['$interpolate', function($interpolate) {
      </file>
    </example>
  */
-var ngBindHtmlDirective = ['$sce', '$parse', function($sce, $parse) {
+var ngBindHtmlDirective = ['$sce', '$parse', '$compile', function($sce, $parse, $compile) {
   return {
     compile: function (tElement) {
-      tElement.addClass('ng-binding');
+      $compile.$$addBindingClass(tElement);
 
       return function (scope, element, attr) {
-        element.data('$binding', attr.ngBindHtml);
+        $compile.$$addBindingInfo(element, attr.ngBindHtml);
 
         var parsed = $parse(attr.ngBindHtml);
 
